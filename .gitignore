@@ -1,0 +1,6 @@
+# Cursor AI rules (local only)
+.cursor/
+
+# Karpathy guidelines (local only)
+CLAUDE.md
+CURSOR.md
