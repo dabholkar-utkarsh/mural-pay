@@ -22,3 +22,4 @@ coverage/
 # Karpathy guidelines (local only)
 CLAUDE.md
 CURSOR.md
+.DS_Store
