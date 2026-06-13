@@ -6,6 +6,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { DEFAULT_FILTERS, searchApolloCompanies } from '@mural/company-discovery';
 import { CompanyDiscoveryService } from './company-discovery.service';
+import { SearchCache } from './search-cache';
 
 jest.mock('@mural/company-discovery', () => ({
   ...jest.requireActual('@mural/company-discovery'),
@@ -18,8 +19,13 @@ const searchMock = searchApolloCompanies as jest.MockedFunction<
 
 function buildService(env: Record<string, string>) {
   const config = { get: (key: string) => env[key] } as ConfigService;
+  // No-op cache: always a miss, so the search path runs as before.
+  const cache = {
+    get: jest.fn().mockResolvedValue(null),
+    set: jest.fn().mockResolvedValue(undefined),
+  } as unknown as SearchCache;
 
-  return new CompanyDiscoveryService(config);
+  return new CompanyDiscoveryService(config, cache);
 }
 
 describe('CompanyDiscoveryService', () => {
