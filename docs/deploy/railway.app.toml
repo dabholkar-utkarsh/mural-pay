@@ -1,0 +1,12 @@
+# Railway template for the public portal (app) Next.js service.
+# In Railway, create a service from this monorepo and copy these settings.
+
+[build]
+builder = "NIXPACKS"
+buildCommand = "pnpm install --frozen-lockfile && pnpm --filter app build"
+
+[deploy]
+startCommand = "pnpm --filter app start"
+healthcheckPath = "/"
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 10

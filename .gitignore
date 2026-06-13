@@ -16,10 +16,6 @@ coverage/
 .DS_Store
 *.log
 
-# Prisma
-apps/server/prisma/*.db
-apps/server/generated/
-
 # Cursor AI rules (local only)
 .cursor/
 
