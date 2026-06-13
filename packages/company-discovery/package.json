@@ -1,0 +1,23 @@
+{
+  "name": "@mural/company-discovery",
+  "version": "0.1.0",
+  "private": true,
+  "description": "ICP company discovery pipeline: Apollo search, AI pre-screen, enrichment, geography gate, buyer verification, AI prospect ranking.",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch --preserveWatchOutput",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.3",
+    "vitest": "^4.1.8"
+  }
+}

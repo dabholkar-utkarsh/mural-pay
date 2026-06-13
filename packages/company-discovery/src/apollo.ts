@@ -206,85 +206,88 @@ export async function searchApolloCompanies({
   );
   companies.sort((a, b) => b.score - a.score);
 
-  if (request.filters.jobTitles.length > 0 && companies.length > 0) {
-    const checkIds = companies
-      .slice(0, PEOPLE_CHECK_COUNT)
-      .map((company) => company.id);
-    const verifiedIds = await findOrganizationsWithBuyerTitles({
-      apiKey,
-      organizationIds: checkIds,
-      buyerTitles: request.filters.jobTitles,
-      fetcher,
-    });
+  const organizationById = new Map(
+    enrichedOrganizations.map((organization) => [
+      organization.id ?? organization.primary_domain ?? organization.name,
+      organization,
+    ]),
+  );
 
-    if (verifiedIds !== null) {
-      const organizationById = new Map(
-        enrichedOrganizations.map((organization) => [
-          organization.id ?? organization.primary_domain ?? organization.name,
-          organization,
-        ]),
-      );
+  // Buyer verification and the final reasoned re-rank are independent calls
+  // over the same top pool, so they run concurrently. The pool is picked
+  // BEFORE verification adjusts scores — verification only moves one
+  // 10-point signal, so pool membership is effectively unchanged, and the
+  // sequential round-trip it used to cost is saved.
+  const topPool = companies.slice(0, PEOPLE_CHECK_COUNT);
+  const checkIds = topPool.map((company) => company.id);
 
-      companies = companies.map((company) => {
-        if (!checkIds.includes(company.id)) {
-          return company;
-        }
-
-        const organization = organizationById.get(company.id);
-
-        return organization
-          ? normalizeApolloCompany(
-              organization,
-              request.filters,
-              verifiedIds.has(company.id),
-            )
-          : company;
-      });
-      companies.sort((a, b) => b.score - a.score);
-    }
-  }
-
-  if (anthropicApiKey && companies.length > 0) {
-    const organizationById = new Map(
-      enrichedOrganizations.map((organization) => [
-        organization.id ?? organization.primary_domain ?? organization.name,
-        organization,
-      ]),
-    );
+  const [verifiedIds, finalVerdicts] = await Promise.all([
+    request.filters.jobTitles.length > 0 && checkIds.length > 0
+      ? findOrganizationsWithBuyerTitles({
+          apiKey,
+          organizationIds: checkIds,
+          buyerTitles: request.filters.jobTitles,
+          fetcher,
+        })
+      : Promise.resolve(null),
     // Final, reasoned judgment over the top candidates only (the ones that
     // can appear in results — they now carry enriched data). Companies
     // outside this pool keep their pre-screen AI score, so every candidate
     // still has an AI score without paying for ~100 written reasons.
-    const rerankPool = companies.slice(0, PEOPLE_CHECK_COUNT);
-    const finalVerdicts = await rerankWithLlm({
-      apiKey: anthropicApiKey,
-      organizations: rerankPool
-        .map((company) => organizationById.get(company.id))
-        .filter((organization): organization is ApolloOrganization => Boolean(organization)),
-      filters: request.filters,
-      fetcher,
+    anthropicApiKey && topPool.length > 0
+      ? rerankWithLlm({
+          apiKey: anthropicApiKey,
+          organizations: topPool
+            .map((company) => organizationById.get(company.id))
+            .filter((organization): organization is ApolloOrganization =>
+              Boolean(organization),
+            ),
+          filters: request.filters,
+          fetcher,
+        })
+      : Promise.resolve(null),
+  ]);
+
+  if (verifiedIds !== null) {
+    const checkIdSet = new Set(checkIds);
+
+    companies = companies.map((company) => {
+      if (!checkIdSet.has(company.id)) {
+        return company;
+      }
+
+      const organization = organizationById.get(company.id);
+
+      return organization
+        ? normalizeApolloCompany(
+            organization,
+            request.filters,
+            verifiedIds.has(company.id),
+          )
+        : company;
     });
-
-    if (finalVerdicts !== null || prescreenVerdicts !== null) {
-      companies = companies.map((company) => {
-        const verdict =
-          finalVerdicts?.get(company.id) ?? prescreenVerdicts?.get(company.id);
-        const llmScore = verdict?.score ?? LLM_NEUTRAL_SCORE;
-        const blendedScore =
-          (1 - LLM_RERANK_WEIGHT) * company.score +
-          LLM_RERANK_WEIGHT * llmScore;
-
-        return {
-          ...company,
-          score: blendedScore,
-          llmScore: verdict?.score ?? null,
-          llmReason: finalVerdicts?.get(company.id)?.reason || null,
-          fit: getFitLabel(blendedScore),
-        };
-      });
-      companies.sort((a, b) => b.score - a.score);
-    }
   }
+
+  if (anthropicApiKey && (finalVerdicts !== null || prescreenVerdicts !== null)) {
+    companies = companies.map((company) => {
+      const verdict =
+        finalVerdicts?.get(company.id) ?? prescreenVerdicts?.get(company.id);
+      const llmScore = verdict?.score ?? LLM_NEUTRAL_SCORE;
+      const blendedScore =
+        (1 - LLM_RERANK_WEIGHT) * company.score +
+        LLM_RERANK_WEIGHT * llmScore;
+
+      return {
+        ...company,
+        score: blendedScore,
+        llmScore: verdict?.score ?? null,
+        llmReason: finalVerdicts?.get(company.id)?.reason || null,
+        fit: getFitLabel(blendedScore),
+      };
+    });
+  }
+
+  companies.sort((a, b) => b.score - a.score);
 
   const topCompanies = companies.slice(0, requestedLimit);
 

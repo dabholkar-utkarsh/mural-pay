@@ -16,24 +16,25 @@ import {
 import {
   DEFAULT_COMPANY_LIMIT,
   DEFAULT_FILTERS,
+  FULL_ICP_FILTERS,
   MAX_COMPANY_LIMIT,
 } from "./constants";
 
 describe("company discovery defaults", () => {
-  it("uses the approved ICP defaults", () => {
+  it("uses a single default industry filter (betting)", () => {
     expect(DEFAULT_FILTERS).toEqual({
-      keywords: ["payroll", "e-com", "marketplace", "betting"],
-      employeeRanges: ["50,200", "200,500"],
-      revenueMin: 10000000,
-      locations: ["United States", "Mexico", "Brazil"],
-      jobTitles: ["CPO", "CLO", "CFO"],
+      keywords: ["betting"],
+      employeeRanges: [],
+      revenueMin: 5_000_000,
+      locations: [],
+      jobTitles: [],
       hiringTitles: [],
     });
   });
 
   it("defaults to 10 companies and caps large requests", () => {
     expect(DEFAULT_COMPANY_LIMIT).toBe(10);
-    expect(MAX_COMPANY_LIMIT).toBe(100);
+    expect(MAX_COMPANY_LIMIT).toBe(10);
   });
 });
 
@@ -61,7 +62,7 @@ describe("buildApolloSearchBody", () => {
   it("maps filters to Apollo fields with curated keyword clusters", () => {
     const body = buildApolloSearchBody({
       filters: {
-        ...DEFAULT_FILTERS,
+        ...FULL_ICP_FILTERS,
         hiringTitles: ["payroll specialist"],
       },
       limit: 10,
@@ -70,7 +71,7 @@ describe("buildApolloSearchBody", () => {
     });
 
     expect(body.q_organization_keyword_tags).toEqual(
-      expandKeywords(DEFAULT_FILTERS.keywords),
+      expandKeywords(FULL_ICP_FILTERS.keywords),
     );
     expect(body.q_organization_keyword_tags).toContain("payroll software");
     expect(body.q_organization_keyword_tags).toContain("prediction markets");
@@ -89,7 +90,7 @@ describe("buildApolloSearchBody", () => {
   it("omits the revenue range when the floor is toggled off", () => {
     const body = buildApolloSearchBody({
       filters: {
-        ...DEFAULT_FILTERS,
+        ...FULL_ICP_FILTERS,
         revenueMin: 0,
       },
       limit: 10,
@@ -102,7 +103,7 @@ describe("buildApolloSearchBody", () => {
 
 describe("normalizeLimit", () => {
   it("keeps valid requested limits", () => {
-    expect(normalizeLimit(25)).toBe(25);
+    expect(normalizeLimit(5)).toBe(5);
   });
 
   it("uses the default limit for invalid values", () => {
@@ -130,7 +131,7 @@ describe("normalizeApolloCompany", () => {
   };
 
   it("derives a strong fit when all available signals match", () => {
-    const company = normalizeApolloCompany(richOrganization, DEFAULT_FILTERS);
+    const company = normalizeApolloCompany(richOrganization, FULL_ICP_FILTERS);
 
     expect(company).toMatchObject({
       id: "org_123",
@@ -152,8 +153,8 @@ describe("normalizeApolloCompany", () => {
   });
 
   it("counts a verified buyer title in the score", () => {
-    const verified = normalizeApolloCompany(richOrganization, DEFAULT_FILTERS, true);
-    const failed = normalizeApolloCompany(richOrganization, DEFAULT_FILTERS, false);
+    const verified = normalizeApolloCompany(richOrganization, FULL_ICP_FILTERS, true);
+    const failed = normalizeApolloCompany(richOrganization, FULL_ICP_FILTERS, false);
 
     expect(verified.score).toBe(1);
     expect(verified.fit).toBe("Strong");
@@ -168,7 +169,7 @@ describe("normalizeApolloCompany", () => {
         name: "ShopRail",
         short_description: "An e-commerce platform for sellers",
       },
-      DEFAULT_FILTERS,
+      FULL_ICP_FILTERS,
     );
 
     expect(company.matchedFilters).toContain("e-com");
@@ -178,7 +179,7 @@ describe("normalizeApolloCompany", () => {
   });
 
   it("scores sparse records low instead of inflating them", () => {
-    const company = normalizeApolloCompany({ name: "Sparse Co" }, DEFAULT_FILTERS);
+    const company = normalizeApolloCompany({ name: "Sparse Co" }, FULL_ICP_FILTERS);
 
     expect(company.matchedFilters).toEqual([]);
     expect(company.score).toBe(0);
@@ -193,7 +194,7 @@ describe("normalizeApolloCompany", () => {
         name: "Ampstek",
         organization_revenue: 47400000,
       },
-      DEFAULT_FILTERS,
+      FULL_ICP_FILTERS,
     );
 
     // Revenue (2) is the only match out of 10 active weight.
@@ -378,7 +379,7 @@ describe("enrichOrganizations", () => {
 
 describe("searchApolloCompanies", () => {
   const filtersWithoutPeopleCheck = {
-    ...DEFAULT_FILTERS,
+    ...FULL_ICP_FILTERS,
     jobTitles: [],
   };
 
@@ -441,7 +442,7 @@ describe("searchApolloCompanies", () => {
     const result = await searchApolloCompanies({
       apiKey: "test-key",
       request: {
-        filters: DEFAULT_FILTERS,
+        filters: FULL_ICP_FILTERS,
         limit: 1,
       },
       fetcher,
@@ -474,7 +475,7 @@ describe("searchApolloCompanies", () => {
     const result = await searchApolloCompanies({
       apiKey: "test-key",
       request: {
-        filters: DEFAULT_FILTERS,
+        filters: FULL_ICP_FILTERS,
         limit: 10,
       },
       fetcher,
@@ -661,6 +662,72 @@ describe("searchApolloCompanies", () => {
     expect(result.companies[0].id).toBe("operator");
   });
 
+  it("runs buyer verification and the final re-rank concurrently and applies both", async () => {
+    const organization = {
+      id: "org_1",
+      name: "Verified Operator",
+      industry: "Payroll",
+      keywords: ["payroll software"],
+      estimated_num_employees: 100,
+      annual_revenue: 20000000,
+      country: "United States",
+    };
+
+    const anthropicResponse = () =>
+      new Response(
+        JSON.stringify({
+          content: [
+            {
+              type: "text",
+              text: '[{"id": "org_1", "score": 90, "reason": "payroll operator"}]',
+            },
+          ],
+        }),
+        { status: 200 },
+      );
+
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(organizationsPage([organization]))
+      .mockResolvedValueOnce(organizationsPage([]))
+      // pre-screen
+      .mockResolvedValueOnce(anthropicResponse())
+      // Promise.all fires people search first, then the final re-rank
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            people: [{ organization_id: "org_1", title: "CFO" }],
+          }),
+          { status: 200 },
+        ),
+      )
+      .mockResolvedValueOnce(anthropicResponse());
+
+    const result = await searchApolloCompanies({
+      apiKey: "test-key",
+      request: {
+        filters: FULL_ICP_FILTERS,
+        limit: 1,
+      },
+      anthropicApiKey: "anthropic-key",
+      fetcher,
+    });
+
+    expect(String(fetcher.mock.calls[3][0])).toContain("mixed_people/search");
+    expect(String(fetcher.mock.calls[4][0])).toContain("api.anthropic.com");
+
+    const company = result.companies[0];
+    const titleSignal = company.signals.find(
+      (signal) => signal.key === "title_relevance",
+    );
+
+    // Verification applied (filter score 1.0) AND verdict blended:
+    // 0.5 * 1.0 + 0.5 * 0.9 = 0.95
+    expect(titleSignal).toMatchObject({ available: true, matched: true });
+    expect(company.llmReason).toBe("payroll operator");
+    expect(company.score).toBeCloseTo(0.95);
+  });
+
   it("keeps rule scores when no Anthropic key is provided", async () => {
     const fetcher = vi
       .fn<typeof fetch>()
@@ -711,7 +778,7 @@ describe("searchApolloCompanies", () => {
       searchApolloCompanies({
         apiKey: "bad-key",
         request: {
-          filters: DEFAULT_FILTERS,
+          filters: FULL_ICP_FILTERS,
           limit: 10,
         },
         fetcher,
@@ -724,11 +791,11 @@ describe("parseCompanySearchRequest", () => {
   it("accepts a complete company search request", () => {
     expect(
       parseCompanySearchRequest({
-        filters: DEFAULT_FILTERS,
+        filters: FULL_ICP_FILTERS,
         limit: 10,
       }),
     ).toEqual({
-      filters: DEFAULT_FILTERS,
+      filters: FULL_ICP_FILTERS,
       limit: 10,
     });
   });

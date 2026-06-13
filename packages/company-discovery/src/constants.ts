@@ -1,7 +1,7 @@
 import type { CompanyFilters, SignalKey } from "./types";
 
 export const DEFAULT_COMPANY_LIMIT = 10;
-export const MAX_COMPANY_LIMIT = 100;
+export const MAX_COMPANY_LIMIT = 10;
 // 100 = Apollo's max page size; the whole candidate pool fits in one call.
 export const APOLLO_PER_PAGE = 100;
 
@@ -134,6 +134,13 @@ export const SELLER_CONTEXT = [
 export const LLM_RERANK_MODEL = "claude-haiku-4-5-20251001";
 export const LLM_RERANK_WEIGHT = 0.5;
 
+// LLM latency is dominated by output tokens, which scale with candidate
+// count — so pools are scored in parallel chunks instead of one big call
+// (a 100-candidate pre-screen becomes 4 concurrent calls of 25). Reasoned
+// verdicts emit ~3x the tokens per company, so they use smaller chunks.
+export const LLM_SCORES_CHUNK_SIZE = 25;
+export const LLM_REASONS_CHUNK_SIZE = 10;
+
 // Companies the LLM was asked about but returned no verdict for get a
 // neutral score instead of keeping their raw rule score (which would let
 // unjudged companies leapfrog judged ones).
@@ -145,7 +152,27 @@ export const LLM_NEUTRAL_SCORE = 0.5;
 // plausible operators instead of whatever Apollo lists first.
 export const PRESCREEN_MULTIPLIER = 10;
 
+// Initial UI state: one industry chip (betting). Reset clears to EMPTY_FILTERS.
 export const DEFAULT_FILTERS: CompanyFilters = {
+  keywords: ["betting"],
+  employeeRanges: [],
+  revenueMin: 5_000_000,
+  locations: [],
+  jobTitles: [],
+  hiringTitles: [],
+};
+
+export const EMPTY_FILTERS: CompanyFilters = {
+  keywords: [],
+  employeeRanges: [],
+  revenueMin: 0,
+  locations: [],
+  jobTitles: [],
+  hiringTitles: [],
+};
+
+// Full approved ICP — used in tests and as a reference preset, not the UI default.
+export const FULL_ICP_FILTERS: CompanyFilters = {
   keywords: ["payroll", "e-com", "marketplace", "betting"],
   employeeRanges: ["50,200", "200,500"],
   revenueMin: 10000000,
@@ -174,7 +201,11 @@ export type FilterGroup = {
   // Whether users can type their own values in addition to the presets.
   allowCustom: boolean;
   options: FilterOption[];
+  // Quick-pick values shown below the typing input.
+  suggestions?: string[];
 };
+
+export const REVENUE_SUGGESTIONS_MILLIONS = [1, 5, 10, 25] as const;
 
 export const FILTER_GROUPS: FilterGroup[] = [
   {
@@ -214,19 +245,21 @@ export const FILTER_GROUPS: FilterGroup[] = [
     key: "jobTitles",
     label: "Buyer personas",
     allowCustom: true,
-    options: [
-      { value: "CPO", label: "CPO" },
-      { value: "CLO", label: "CLO" },
-      { value: "CFO", label: "CFO" },
+    options: [],
+    suggestions: [
+      "CPO",
+      "CLO",
+      "CFO",
+      "VP Finance",
+      "Head of Payments",
+      "Treasurer",
     ],
   },
   {
     key: "hiringTitles",
     label: "Hiring for",
     allowCustom: true,
-    options: HIRING_TITLE_OPTIONS.map((title) => ({
-      value: title,
-      label: title,
-    })),
+    options: [],
+    suggestions: [...HIRING_TITLE_OPTIONS],
   },
 ];

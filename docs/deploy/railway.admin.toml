@@ -1,0 +1,11 @@
+# Railway template for the admin Next.js service.
+# In Railway, create a service from this monorepo and copy these settings.
+
+[build]
+builder = "NIXPACKS"
+buildCommand = "pnpm install --frozen-lockfile && pnpm --filter @mural/company-discovery build && pnpm --filter admin build"
+
+[deploy]
+startCommand = "pnpm --filter admin start"
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 10

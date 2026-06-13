@@ -6,11 +6,11 @@
     "dev": "next dev --port 3001",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint",
-    "test": "vitest run"
+    "lint": "next lint"
   },
   "dependencies": {
     "@base-ui/react": "^1.5.0",
+    "@mural/company-discovery": "workspace:*",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "lucide-react": "^1.18.0",
@@ -30,7 +30,6 @@
     "eslint-config-next": "14.2.35",
     "postcss": "^8",
     "tailwindcss": "^3.4.1",
-    "typescript": "^5",
-    "vitest": "^4.1.8"
+    "typescript": "^5"
   }
 }

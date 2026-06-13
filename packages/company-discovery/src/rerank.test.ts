@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { buildRerankPrompt, parseVerdicts, rerankWithLlm } from "./rerank";
-import { DEFAULT_FILTERS } from "./constants";
+import { FULL_ICP_FILTERS } from "./constants";
 
 function anthropicResponse(text: string) {
   return new Response(
@@ -21,7 +21,7 @@ describe("buildRerankPrompt", () => {
           short_description: "Local search and advertising technology",
         },
       ],
-      DEFAULT_FILTERS,
+      FULL_ICP_FILTERS,
     );
 
     expect(prompt).toContain("payroll, e-com, marketplace, betting");
@@ -30,14 +30,14 @@ describe("buildRerankPrompt", () => {
   });
 
   it("asks for scores only when reasons are disabled (fast pre-screen)", () => {
-    const prompt = buildRerankPrompt([{ id: "org_1" }], DEFAULT_FILTERS, false);
+    const prompt = buildRerankPrompt([{ id: "org_1" }], FULL_ICP_FILTERS, false);
 
     expect(prompt).toContain("no reasons");
     expect(prompt).not.toContain("max 12 words");
   });
 
   it("scores prospects for Mural Pay, not just industry membership", () => {
-    const prompt = buildRerankPrompt([{ id: "org_1" }], DEFAULT_FILTERS);
+    const prompt = buildRerankPrompt([{ id: "org_1" }], FULL_ICP_FILTERS);
 
     expect(prompt).toContain("Mural Pay");
     expect(prompt).toContain("stablecoin");
@@ -48,7 +48,7 @@ describe("buildRerankPrompt", () => {
   it("includes target geographies and candidate locations", () => {
     const prompt = buildRerankPrompt(
       [{ id: "org_1", name: "Stoiximan", city: "Athens", country: "Greece" }],
-      DEFAULT_FILTERS,
+      FULL_ICP_FILTERS,
     );
 
     expect(prompt).toContain(
@@ -99,7 +99,7 @@ describe("rerankWithLlm", () => {
     const verdicts = await rerankWithLlm({
       apiKey: "test-key",
       organizations: [{ id: "org_1", name: "Entrepreneur Media" }],
-      filters: DEFAULT_FILTERS,
+      filters: FULL_ICP_FILTERS,
       fetcher,
     });
 
@@ -116,10 +116,68 @@ describe("rerankWithLlm", () => {
       await rerankWithLlm({
         apiKey: "test-key",
         organizations: [{ id: "org_1" }],
-        filters: DEFAULT_FILTERS,
+        filters: FULL_ICP_FILTERS,
         fetcher,
       }),
     ).toBeNull();
+  });
+
+  it("splits large pools into parallel chunks and merges the verdicts", async () => {
+    // 26 candidates, scores-only -> chunk size 25 -> 2 concurrent calls.
+    const organizations = Array.from({ length: 26 }, (_, i) => ({
+      id: `org_${i}`,
+      name: `Company ${i}`,
+    }));
+
+    // Each call answers only for the ids present in its own prompt.
+    const fetcher = vi.fn<typeof fetch>(async (_url, init) => {
+      const body = JSON.parse(String(init?.body)) as {
+        messages: Array<{ content: string }>;
+      };
+      const verdicts = organizations
+        .filter((org) => body.messages[0].content.includes(`"${org.id}"`))
+        .map((org) => ({ id: org.id, score: 50 }));
+
+      return anthropicResponse(JSON.stringify(verdicts));
+    });
+
+    const verdicts = await rerankWithLlm({
+      apiKey: "test-key",
+      organizations,
+      filters: FULL_ICP_FILTERS,
+      includeReasons: false,
+      fetcher,
+    });
+
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(verdicts?.size).toBe(26);
+    expect(verdicts?.get("org_25")?.score).toBe(0.5);
+  });
+
+  it("keeps verdicts from surviving chunks when one chunk fails", async () => {
+    const organizations = Array.from({ length: 30 }, (_, i) => ({
+      id: `org_${i}`,
+    }));
+
+    const fetcher = vi
+      .fn<typeof fetch>()
+      // First chunk (org_0..org_24) fails; its companies fall back to
+      // prescreen/neutral scoring downstream.
+      .mockResolvedValueOnce(new Response("{}", { status: 429 }))
+      .mockResolvedValueOnce(
+        anthropicResponse('[{"id": "org_29", "score": 80}]'),
+      );
+
+    const verdicts = await rerankWithLlm({
+      apiKey: "test-key",
+      organizations,
+      filters: FULL_ICP_FILTERS,
+      includeReasons: false,
+      fetcher,
+    });
+
+    expect(verdicts?.size).toBe(1);
+    expect(verdicts?.get("org_29")?.score).toBe(0.8);
   });
 
   it("returns null without calling the API when there are no candidates", async () => {
@@ -129,7 +187,7 @@ describe("rerankWithLlm", () => {
       await rerankWithLlm({
         apiKey: "test-key",
         organizations: [],
-        filters: DEFAULT_FILTERS,
+        filters: FULL_ICP_FILTERS,
         fetcher,
       }),
     ).toBeNull();

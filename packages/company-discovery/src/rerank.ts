@@ -1,4 +1,9 @@
-import { LLM_RERANK_MODEL, SELLER_CONTEXT } from "./constants";
+import {
+  LLM_REASONS_CHUNK_SIZE,
+  LLM_RERANK_MODEL,
+  LLM_SCORES_CHUNK_SIZE,
+  SELLER_CONTEXT,
+} from "./constants";
 import type { ApolloOrganization, CompanyFilters } from "./types";
 
 const ANTHROPIC_MESSAGES_URL = "https://api.anthropic.com/v1/messages";
@@ -9,10 +14,15 @@ export type LlmVerdict = {
   reason: string;
 };
 
-// Scores candidates against the ICP with a single LLM call. Catches the
+// Scores candidates against the ICP with the LLM. Catches the
 // "talks about the industry vs. operates in it" gap that keyword matching
 // cannot (media companies, consultancies, ad-tech, investors).
-// Returns null on any failure so the caller falls back to rule-only scoring.
+// LLM latency is output-token-bound, so large pools are split into chunks
+// scored in parallel; verdicts from successful chunks are merged, and a
+// failed chunk only loses its own verdicts (those companies fall back the
+// same way they would if the model skipped them).
+// Returns null only when no chunk produced verdicts, so the caller falls
+// back to rule-only scoring.
 export async function rerankWithLlm({
   apiKey,
   organizations,
@@ -32,6 +42,49 @@ export async function rerankWithLlm({
     return null;
   }
 
+  // Reasoned verdicts cost ~3x the output tokens per company, so they use
+  // smaller chunks to keep per-call latency flat.
+  const chunkSize = includeReasons
+    ? LLM_REASONS_CHUNK_SIZE
+    : LLM_SCORES_CHUNK_SIZE;
+  const chunks: ApolloOrganization[][] = [];
+
+  for (let i = 0; i < organizations.length; i += chunkSize) {
+    chunks.push(organizations.slice(i, i + chunkSize));
+  }
+
+  const chunkVerdicts = await Promise.all(
+    chunks.map((chunk) =>
+      rerankChunk({ apiKey, organizations: chunk, filters, includeReasons, fetcher }),
+    ),
+  );
+
+  const merged = new Map<string, LlmVerdict>();
+
+  for (const verdicts of chunkVerdicts) {
+    if (verdicts) {
+      for (const [id, verdict] of verdicts) {
+        merged.set(id, verdict);
+      }
+    }
+  }
+
+  return merged.size > 0 ? merged : null;
+}
+
+async function rerankChunk({
+  apiKey,
+  organizations,
+  filters,
+  includeReasons,
+  fetcher,
+}: {
+  apiKey: string;
+  organizations: ApolloOrganization[];
+  filters: CompanyFilters;
+  includeReasons: boolean;
+  fetcher: typeof fetch;
+}): Promise<Map<string, LlmVerdict> | null> {
   try {
     const response = await fetcher(ANTHROPIC_MESSAGES_URL, {
       method: "POST",
@@ -42,8 +95,8 @@ export async function rerankWithLlm({
       },
       body: JSON.stringify({
         model: LLM_RERANK_MODEL,
-        // Enough for verdicts on a full 100-candidate pool; a truncated
-        // response fails JSON parsing and silently disables the re-rank.
+        // Generous headroom for a full chunk of verdicts; a truncated
+        // response fails JSON parsing and drops this chunk's verdicts.
         max_tokens: 8000,
         messages: [
           {

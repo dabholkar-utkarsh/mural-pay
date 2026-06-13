@@ -1,0 +1,11 @@
+# Railway template for the NestJS company-discovery API service.
+# In Railway, create a second service from this monorepo and copy these settings.
+
+[build]
+builder = "NIXPACKS"
+buildCommand = "pnpm install --frozen-lockfile && pnpm --filter @mural/company-discovery build && pnpm --filter server build"
+
+[deploy]
+startCommand = "pnpm --filter server start:prod"
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 10

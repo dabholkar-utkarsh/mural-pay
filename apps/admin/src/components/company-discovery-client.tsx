@@ -18,26 +18,34 @@ import { Skeleton } from "@/components/ui/skeleton";
 import {
   DEFAULT_COMPANY_LIMIT,
   DEFAULT_FILTERS,
+  EMPTY_FILTERS,
   FILTER_GROUPS,
-} from "@/features/company-discovery/constants";
+  MAX_COMPANY_LIMIT,
+  REVENUE_SUGGESTIONS_MILLIONS,
+} from "@mural/company-discovery";
 import type {
   CompanyFilters,
   CompanySearchResponse,
   DiscoveredCompany,
-} from "@/features/company-discovery/types";
+  FilterGroupKey,
+} from "@mural/company-discovery";
 import { cn } from "@/lib/utils";
-
-import type { FilterGroupKey } from "@/features/company-discovery/constants";
 
 type SearchState = "idle" | "loading" | "success" | "error";
 type ToggleGroupKey = FilterGroupKey;
 
 const chipBase =
-  "cursor-pointer rounded-full border px-3 py-1.5 text-sm font-medium transition-colors duration-200 outline-none focus-visible:ring-2 focus-visible:ring-amber-400/50 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-900";
+  "cursor-pointer rounded-full border px-3 py-1.5 text-sm font-medium transition-colors duration-200 outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background";
+
+const inputClass =
+  "w-full rounded-xl border border-input bg-background px-3 py-2 text-foreground outline-none transition-colors duration-200 placeholder:text-muted-foreground focus:border-ring focus:ring-2 focus:ring-ring/20";
+
+const suggestionChipClass =
+  "cursor-pointer rounded-full border border-border bg-background px-2.5 py-1 text-xs font-medium text-muted-foreground transition-colors duration-200 hover:border-foreground/30 hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
 
 export function CompanyDiscoveryClient() {
   const [filters, setFilters] = useState<CompanyFilters>(DEFAULT_FILTERS);
-  const [limit, setLimit] = useState(DEFAULT_COMPANY_LIMIT);
+  const [limitInput, setLimitInput] = useState(String(DEFAULT_COMPANY_LIMIT));
   const [drafts, setDrafts] = useState<Partial<Record<ToggleGroupKey, string>>>(
     {},
   );
@@ -56,9 +64,18 @@ export function CompanyDiscoveryClient() {
     [filters],
   );
 
+  const canSearch = activeFilterCount > 0;
+
   async function searchCompanies() {
+    if (!canSearch) {
+      return;
+    }
+
     setSearchState("loading");
     setError(null);
+
+    const limit = clampLimitInput(limitInput);
+    setLimitInput(String(limit));
 
     try {
       const response = await fetch("/api/company-search", {
@@ -104,51 +121,56 @@ export function CompanyDiscoveryClient() {
     });
   }
 
-  function addCustomValue(groupKey: ToggleGroupKey) {
-    const value = (drafts[groupKey] ?? "").trim();
+  function addFilterValue(groupKey: ToggleGroupKey, value: string) {
+    const trimmed = value.trim();
 
-    if (!value) {
+    if (!trimmed) {
       return;
     }
 
     setFilters((current) =>
-      current[groupKey].includes(value)
+      current[groupKey].includes(trimmed)
         ? current
-        : { ...current, [groupKey]: [...current[groupKey], value] },
+        : { ...current, [groupKey]: [...current[groupKey], trimmed] },
     );
     setDrafts((current) => ({ ...current, [groupKey]: "" }));
   }
 
+  function addCustomValue(groupKey: ToggleGroupKey) {
+    addFilterValue(groupKey, drafts[groupKey] ?? "");
+  }
+
   function resetFilters() {
-    setFilters(DEFAULT_FILTERS);
-    setLimit(DEFAULT_COMPANY_LIMIT);
+    setFilters(EMPTY_FILTERS);
+    setLimitInput(String(DEFAULT_COMPANY_LIMIT));
     setDrafts({});
   }
 
+  const skeletonCount = clampLimitInput(limitInput);
+
   return (
-    <main className="min-h-screen bg-slate-950 px-4 py-6 text-slate-100 sm:px-6 sm:py-8">
+    <main className="min-h-screen bg-muted/30 px-4 py-6 text-foreground sm:px-6 sm:py-8">
       <div className="mx-auto flex max-w-7xl flex-col gap-6 sm:gap-8">
-        <section className="rounded-2xl border border-slate-800 bg-slate-900/80 p-6 shadow-xl sm:rounded-3xl sm:p-8">
+        <section className="rounded-2xl border border-border bg-card p-6 shadow-sm sm:rounded-3xl sm:p-8">
           <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
             <div className="max-w-3xl">
-              <p className="flex items-center gap-2 text-sm font-medium uppercase tracking-[0.18em] text-amber-400">
+              <p className="flex items-center gap-2 text-sm font-medium uppercase tracking-[0.18em] text-muted-foreground">
                 <Building2 className="size-4" aria-hidden="true" />
                 Mural Pay Admin
               </p>
-              <h1 className="mt-3 text-3xl font-semibold tracking-tight text-white sm:text-4xl">
-                Apollo ICP Company Discovery
+              <h1 className="mt-3 text-3xl font-semibold tracking-tight text-foreground sm:text-4xl">
+                Company Discovery
               </h1>
-              <p className="mt-3 text-base leading-7 text-slate-400">
-                Search Apollo with the approved ICP, review similar companies,
-                and scan derived buying signals before deciding which accounts
-                deserve deeper research.
+              <p className="mt-3 text-base leading-7 text-muted-foreground">
+                Find companies that match your ICP, review fit signals, and
+                decide which accounts deserve deeper research.
               </p>
             </div>
-            <div className="flex shrink-0 items-center gap-3 rounded-2xl border border-amber-500/20 bg-amber-500/10 px-5 py-4">
-              <Filter className="size-5 text-amber-400" aria-hidden="true" />
+            <div className="flex shrink-0 items-center gap-3 rounded-2xl border border-border bg-muted px-5 py-4">
+              <Filter className="size-5 text-muted-foreground" aria-hidden="true" />
               <div>
-                <p className="text-sm text-amber-100/80">Active filters</p>
-                <p className="text-3xl font-semibold tabular-nums text-white">
+                <p className="text-sm text-muted-foreground">Active filters</p>
+                <p className="text-3xl font-semibold tabular-nums text-foreground">
                   {activeFilterCount}
                 </p>
               </div>
@@ -158,13 +180,13 @@ export function CompanyDiscoveryClient() {
 
         <section className="grid gap-6 lg:grid-cols-[340px_1fr] lg:items-start">
           <aside className="lg:sticky lg:top-6">
-            <div className="rounded-2xl border border-slate-800 bg-slate-900 p-5 shadow-xl sm:rounded-3xl sm:p-6">
+            <div className="rounded-2xl border border-border bg-card p-5 shadow-sm sm:rounded-3xl sm:p-6">
               <div className="flex items-start justify-between gap-3">
                 <div>
-                  <h2 className="text-lg font-semibold text-white">
+                  <h2 className="text-lg font-semibold text-foreground">
                     ICP filters
                   </h2>
-                  <p className="mt-1 text-sm text-slate-400">
+                  <p className="mt-1 text-sm text-muted-foreground">
                     Toggle presets before searching.
                   </p>
                 </div>
@@ -172,7 +194,7 @@ export function CompanyDiscoveryClient() {
                   <button
                     type="button"
                     onClick={resetFilters}
-                    className="flex shrink-0 cursor-pointer items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium text-slate-400 transition-colors duration-200 hover:bg-slate-800 hover:text-slate-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400/50"
+                    className="flex shrink-0 cursor-pointer items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium text-muted-foreground transition-colors duration-200 hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                   >
                     <X className="size-3.5" aria-hidden="true" />
                     Reset
@@ -182,7 +204,6 @@ export function CompanyDiscoveryClient() {
 
               <div className="mt-6 flex flex-col gap-6">
                 {FILTER_GROUPS.map((group) => {
-                  // Custom values the user typed that aren't preset options.
                   const customValues = filters[group.key].filter(
                     (value) =>
                       !group.options.some((option) => option.value === value),
@@ -194,64 +215,82 @@ export function CompanyDiscoveryClient() {
 
                   return (
                     <div key={group.key}>
-                      <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                      <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                         {group.label}
                       </h3>
-                      <div className="mt-3 flex flex-wrap gap-2">
-                        {chips.map((option) => {
-                          const selected = filters[group.key].includes(
-                            option.value,
-                          );
+                      {chips.length > 0 ? (
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          {chips.map((option) => {
+                            const selected = filters[group.key].includes(
+                              option.value,
+                            );
 
-                          return (
-                            <button
-                              key={option.value}
-                              type="button"
-                              aria-pressed={selected}
-                              onClick={() =>
-                                toggleFilter(group.key, option.value)
-                              }
-                              className={cn(
-                                chipBase,
-                                selected
-                                  ? "border-amber-400/40 bg-amber-400/15 text-amber-100"
-                                  : "border-slate-700 bg-slate-800/60 text-slate-300 hover:border-slate-600 hover:bg-slate-800",
-                              )}
-                            >
-                              {option.label}
-                            </button>
-                          );
-                        })}
-                      </div>
+                            return (
+                              <button
+                                key={option.value}
+                                type="button"
+                                aria-pressed={selected}
+                                onClick={() =>
+                                  toggleFilter(group.key, option.value)
+                                }
+                                className={cn(
+                                  chipBase,
+                                  selected
+                                    ? "border-foreground bg-foreground text-background"
+                                    : "border-border bg-background text-muted-foreground hover:border-foreground/30 hover:bg-muted",
+                                )}
+                              >
+                                {option.label}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      ) : null}
                       {group.allowCustom ? (
-                        <input
-                          className="mt-2 w-full rounded-xl border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-100 outline-none transition-colors duration-200 placeholder:text-slate-500 focus:border-amber-400/50 focus:ring-2 focus:ring-amber-400/20"
-                          placeholder="Type a title and press Enter"
-                          value={drafts[group.key] ?? ""}
-                          onChange={(event) =>
-                            setDrafts((current) => ({
-                              ...current,
-                              [group.key]: event.target.value,
-                            }))
-                          }
-                          onKeyDown={(event) => {
-                            if (event.key === "Enter") {
-                              event.preventDefault();
-                              addCustomValue(group.key);
+                        <div className="mt-3">
+                          <input
+                            className={cn(inputClass, "text-sm")}
+                            placeholder={
+                              group.key === "hiringTitles"
+                                ? "Type a role and press Enter"
+                                : "Type a title and press Enter"
                             }
-                          }}
-                        />
+                            value={drafts[group.key] ?? ""}
+                            onChange={(event) =>
+                              setDrafts((current) => ({
+                                ...current,
+                                [group.key]: event.target.value,
+                              }))
+                            }
+                            onKeyDown={(event) => {
+                              if (event.key === "Enter") {
+                                event.preventDefault();
+                                addCustomValue(group.key);
+                              }
+                            }}
+                          />
+                          {group.suggestions ? (
+                            <SuggestionChips
+                              suggestions={group.suggestions}
+                              query={drafts[group.key] ?? ""}
+                              selected={filters[group.key]}
+                              onSelect={(value) =>
+                                addFilterValue(group.key, value)
+                              }
+                            />
+                          ) : null}
+                        </div>
                       ) : null}
                     </div>
                   );
                 })}
 
                 <label className="block">
-                  <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                     Min revenue ($M)
                   </span>
                   <input
-                    className="mt-3 w-full rounded-xl border border-slate-700 bg-slate-800 px-3 py-2 text-slate-100 outline-none transition-colors duration-200 placeholder:text-slate-500 focus:border-amber-400/50 focus:ring-2 focus:ring-amber-400/20"
+                    className={cn(inputClass, "mt-3")}
                     min={0}
                     placeholder="Blank = no floor"
                     type="number"
@@ -270,30 +309,50 @@ export function CompanyDiscoveryClient() {
                       }));
                     }}
                   />
-                  <p className="mt-2 text-xs text-slate-500">
+                  <p className="mt-2 text-xs text-muted-foreground">
                     {filters.revenueMin > 0
-                      ? `Apollo revenue minimum: ${formatCurrency(filters.revenueMin)}`
-                      : "Off — includes young companies Apollo lacks revenue data for"}
+                      ? `Revenue minimum: ${formatCurrency(filters.revenueMin)}`
+                      : "Off — includes companies without revenue data"}
                   </p>
+                  <SuggestionChips
+                    suggestions={REVENUE_SUGGESTIONS_MILLIONS.map(String)}
+                    selected={
+                      filters.revenueMin > 0
+                        ? [String(filters.revenueMin / 1_000_000)]
+                        : []
+                    }
+                    onSelect={(value) =>
+                      setFilters((current) => ({
+                        ...current,
+                        revenueMin: Number(value) * 1_000_000,
+                      }))
+                    }
+                    formatLabel={(value) => `$${value}M`}
+                    allowReselect
+                  />
                 </label>
 
                 <label className="block">
-                  <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                    Number of companies
+                  <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                    Number of companies (max {MAX_COMPANY_LIMIT})
                   </span>
                   <input
-                    className="mt-3 w-full rounded-xl border border-slate-700 bg-slate-800 px-3 py-2 text-slate-100 outline-none transition-colors duration-200 placeholder:text-slate-500 focus:border-amber-400/50 focus:ring-2 focus:ring-amber-400/20"
+                    className={cn(inputClass, "mt-3")}
                     min={1}
-                    max={100}
+                    max={MAX_COMPANY_LIMIT}
                     type="number"
-                    value={limit}
-                    onChange={(event) => setLimit(Number(event.target.value))}
+                    value={limitInput}
+                    onChange={(event) => setLimitInput(event.target.value)}
+                    onBlur={() => {
+                      const clamped = clampLimitInput(limitInput);
+                      setLimitInput(String(clamped));
+                    }}
                   />
                 </label>
 
                 <Button
-                  className="h-11 w-full cursor-pointer rounded-xl bg-amber-500 text-slate-950 hover:bg-amber-400 disabled:opacity-60"
-                  disabled={searchState === "loading"}
+                  className="h-11 w-full cursor-pointer rounded-xl"
+                  disabled={!canSearch || searchState === "loading"}
                   onClick={searchCompanies}
                 >
                   {searchState === "loading" ? (
@@ -302,7 +361,7 @@ export function CompanyDiscoveryClient() {
                         className="size-4 animate-spin motion-reduce:animate-none"
                         aria-hidden="true"
                       />
-                      Searching Apollo...
+                      Searching...
                     </>
                   ) : (
                     <>
@@ -315,18 +374,18 @@ export function CompanyDiscoveryClient() {
             </div>
           </aside>
 
-          <section className="rounded-2xl border border-slate-800 bg-slate-900 p-5 shadow-xl sm:rounded-3xl sm:p-6">
+          <section className="rounded-2xl border border-border bg-card p-5 shadow-sm sm:rounded-3xl sm:p-6">
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
               <div>
-                <h2 className="text-lg font-semibold text-white">
-                  Similar companies
+                <h2 className="text-lg font-semibold text-foreground">
+                  Companies
                 </h2>
-                <p className="text-sm text-slate-400">
-                  Live Apollo results with derived ICP fit signals.
+                <p className="text-sm text-muted-foreground">
+                  Results ranked by ICP fit and buying signals.
                 </p>
               </div>
               {results ? (
-                <p className="text-sm tabular-nums text-slate-500">
+                <p className="text-sm tabular-nums text-muted-foreground">
                   Showing {results.returnedCount} of {results.requestedLimit}{" "}
                   requested
                 </p>
@@ -340,7 +399,8 @@ export function CompanyDiscoveryClient() {
                   message="Set filters and search to see company matches."
                   action={
                     <Button
-                      className="cursor-pointer bg-amber-500 text-slate-950 hover:bg-amber-400"
+                      className="cursor-pointer"
+                      disabled={!canSearch}
                       onClick={searchCompanies}
                     >
                       <Search className="size-4" aria-hidden="true" />
@@ -349,7 +409,9 @@ export function CompanyDiscoveryClient() {
                   }
                 />
               ) : null}
-              {searchState === "loading" ? <LoadingSkeleton count={limit} /> : null}
+              {searchState === "loading" ? (
+                <LoadingSkeleton count={skeletonCount} />
+              ) : null}
               {searchState === "error" ? (
                 <ErrorState message={error ?? "Company search failed"} />
               ) : null}
@@ -361,10 +423,10 @@ export function CompanyDiscoveryClient() {
                   action={
                     <Button
                       variant="outline"
-                      className="cursor-pointer border-slate-700 bg-transparent text-slate-200 hover:bg-slate-800"
+                      className="cursor-pointer"
                       onClick={resetFilters}
                     >
-                      Reset to default ICP
+                      Clear all filters
                     </Button>
                   }
                 />
@@ -416,7 +478,7 @@ function CompanyResults({
 
   return (
     <div className="flex flex-col gap-2">
-      <h3 className="mb-1 text-sm font-medium text-slate-400">
+      <h3 className="mb-1 text-sm font-medium text-muted-foreground">
         {companies.length} result{companies.length === 1 ? "" : "s"}
         {companies.length < requestedLimit
           ? ` of ${requestedLimit} requested`
@@ -454,10 +516,10 @@ function CompanyCard({
   return (
     <article
       className={cn(
-        "rounded-xl border bg-slate-800/40 transition-colors duration-200",
+        "rounded-xl border bg-card transition-colors duration-200",
         expanded
-          ? "border-slate-700 bg-slate-800/70"
-          : "border-slate-800 hover:border-slate-700 hover:bg-slate-800/60",
+          ? "border-border shadow-sm"
+          : "border-border hover:border-foreground/20 hover:bg-muted/40",
       )}
     >
       <div className="flex items-stretch">
@@ -465,22 +527,26 @@ function CompanyCard({
           type="button"
           aria-expanded={expanded}
           onClick={onToggle}
-          className="flex min-w-0 flex-1 cursor-pointer items-center gap-3 px-4 py-3 text-left outline-none transition-colors duration-200 focus-visible:ring-2 focus-visible:ring-amber-400/50 focus-visible:ring-inset sm:gap-4 sm:px-5 sm:py-3.5"
+          className="flex min-w-0 flex-1 cursor-pointer items-center gap-3 px-4 py-3 text-left outline-none transition-colors duration-200 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset sm:gap-4 sm:px-5 sm:py-3.5"
         >
-          <span className="shrink-0 tabular-nums text-sm text-slate-500">
+          <span className="shrink-0 tabular-nums text-sm text-muted-foreground">
             {index + 1}.
           </span>
           <div className="min-w-0 flex-1">
-            <p className="truncate font-semibold text-white">{company.name}</p>
+            <p className="truncate font-semibold text-foreground">
+              {company.name}
+            </p>
             {company.domain ? (
-              <p className="truncate text-xs text-slate-500">{company.domain}</p>
+              <p className="truncate text-xs text-muted-foreground">
+                {company.domain}
+              </p>
             ) : null}
             {!expanded && previewSignals.length > 0 ? (
               <div className="mt-1.5 flex flex-wrap gap-1">
                 {previewSignals.map((signal) => (
                   <span
                     key={signal}
-                    className="rounded-full bg-slate-700/60 px-2 py-0.5 text-[10px] font-medium text-slate-400"
+                    className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground"
                   >
                     {signal}
                   </span>
@@ -490,12 +556,12 @@ function CompanyCard({
           </div>
           <div className="flex shrink-0 items-center gap-2 sm:gap-3">
             <FitBadge fit={company.fit} />
-            <span className="text-sm font-medium tabular-nums text-slate-300">
+            <span className="text-sm font-medium tabular-nums text-foreground">
               {Math.round(company.score * 100)}%
             </span>
             <ChevronDown
               className={cn(
-                "size-4 shrink-0 text-slate-500 transition-transform duration-200 motion-reduce:transition-none",
+                "size-4 shrink-0 text-muted-foreground transition-transform duration-200 motion-reduce:transition-none",
                 expanded && "rotate-180",
               )}
               aria-hidden="true"
@@ -504,7 +570,7 @@ function CompanyCard({
         </button>
         {company.websiteUrl ? (
           <a
-            className="flex shrink-0 cursor-pointer items-center border-l border-slate-800 px-3 text-slate-500 transition-colors duration-200 hover:bg-slate-800 hover:text-amber-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400/50 focus-visible:ring-inset sm:px-4"
+            className="flex shrink-0 cursor-pointer items-center border-l border-border px-3 text-muted-foreground transition-colors duration-200 hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset sm:px-4"
             href={company.websiteUrl}
             rel="noreferrer"
             target="_blank"
@@ -518,12 +584,12 @@ function CompanyCard({
       </div>
 
       {expanded ? (
-        <div className="border-t border-slate-800 px-4 pb-5 pt-4 sm:px-5">
+        <div className="border-t border-border px-4 pb-5 pt-4 sm:px-5">
           <dl className="grid gap-x-6 gap-y-3 text-sm sm:grid-cols-[minmax(0,160px)_1fr]">
             <CompanyField label="Website">
               {company.websiteUrl ? (
                 <a
-                  className="inline-flex cursor-pointer items-center gap-1 text-amber-400 transition-colors duration-200 hover:text-amber-300"
+                  className="inline-flex cursor-pointer items-center gap-1 text-foreground underline-offset-2 transition-colors duration-200 hover:underline"
                   href={company.websiteUrl}
                   rel="noreferrer"
                   target="_blank"
@@ -548,7 +614,7 @@ function CompanyCard({
             <CompanyField label="LinkedIn">
               {company.linkedinUrl ? (
                 <a
-                  className="inline-flex cursor-pointer items-center gap-1 text-amber-400 transition-colors duration-200 hover:text-amber-300"
+                  className="inline-flex cursor-pointer items-center gap-1 text-foreground underline-offset-2 transition-colors duration-200 hover:underline"
                   href={company.linkedinUrl}
                   rel="noreferrer"
                   target="_blank"
@@ -570,7 +636,7 @@ function CompanyCard({
           </dl>
 
           <div className="mt-4">
-            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
               Buying signals
             </p>
             <div className="mt-2">
@@ -582,15 +648,15 @@ function CompanyCard({
           </div>
 
           {company.llmReason ? (
-            <div className="mt-4 rounded-lg border border-violet-500/20 bg-violet-500/5 p-3">
-              <p className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-violet-300">
+            <div className="mt-4 rounded-lg border border-border bg-muted/50 p-3">
+              <p className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                 <Sparkles className="size-3.5" aria-hidden="true" />
                 AI ICP judgment
                 {company.llmScore !== null
                   ? ` (${Math.round(company.llmScore * 100)}/100)`
                   : ""}
               </p>
-              <p className="mt-1.5 text-sm leading-relaxed text-slate-300">
+              <p className="mt-1.5 text-sm leading-relaxed text-foreground">
                 {company.llmReason}
               </p>
             </div>
@@ -610,14 +676,14 @@ function CompanyField({
 }) {
   return (
     <>
-      <dt className="font-medium text-slate-500">{label}</dt>
-      <dd className="text-slate-200">{children}</dd>
+      <dt className="font-medium text-muted-foreground">{label}</dt>
+      <dd className="text-foreground">{children}</dd>
     </>
   );
 }
 
 function MissingValue() {
-  return <span className="text-slate-600">Missing</span>;
+  return <span className="text-muted-foreground/60">Missing</span>;
 }
 
 function BadgeList({
@@ -628,7 +694,7 @@ function BadgeList({
   emptyLabel?: string;
 }) {
   if (values.length === 0) {
-    return <span className="text-sm text-slate-600">{emptyLabel}</span>;
+    return <span className="text-sm text-muted-foreground">{emptyLabel}</span>;
   }
 
   return (
@@ -636,7 +702,7 @@ function BadgeList({
       {values.map((value) => (
         <span
           key={value}
-          className="rounded-full bg-slate-700/60 px-2 py-1 text-xs font-medium text-slate-300"
+          className="rounded-full bg-muted px-2 py-1 text-xs font-medium text-muted-foreground"
         >
           {value}
         </span>
@@ -650,9 +716,9 @@ function FitBadge({ fit }: { fit: DiscoveredCompany["fit"] }) {
     <span
       className={cn(
         "rounded-full px-2.5 py-1 text-xs font-semibold",
-        fit === "Strong" && "bg-emerald-500/15 text-emerald-400",
-        fit === "Medium" && "bg-amber-500/15 text-amber-400",
-        fit === "Weak" && "bg-slate-700/60 text-slate-400",
+        fit === "Strong" && "bg-emerald-100 text-emerald-700",
+        fit === "Medium" && "bg-amber-100 text-amber-800",
+        fit === "Weak" && "bg-muted text-muted-foreground",
       )}
     >
       {fit}
@@ -668,7 +734,7 @@ function LoadingSkeleton({ count }: { count: number }) {
       {Array.from({ length: rows }).map((_, index) => (
         <div
           key={index}
-          className="flex items-center gap-3 rounded-xl border border-slate-800 bg-slate-800/40 px-4 py-3.5 sm:gap-4 sm:px-5"
+          className="flex items-center gap-3 rounded-xl border border-border bg-card px-4 py-3.5 sm:gap-4 sm:px-5"
         >
           <Skeleton className="h-4 w-4 shrink-0" />
           <div className="min-w-0 flex-1 space-y-1.5">
@@ -695,14 +761,14 @@ function EmptyState({
   action?: ReactNode;
 }) {
   return (
-    <div className="flex min-h-[320px] flex-col items-center justify-center gap-4 rounded-xl border border-dashed border-slate-700 bg-slate-800/20 px-6 py-12 text-center">
-      <div className="flex size-12 items-center justify-center rounded-full bg-slate-800 text-slate-400">
+    <div className="flex min-h-[320px] flex-col items-center justify-center gap-4 rounded-xl border border-dashed border-border bg-muted/30 px-6 py-12 text-center">
+      <div className="flex size-12 items-center justify-center rounded-full bg-muted text-muted-foreground">
         <Icon className="size-5" aria-hidden="true" />
       </div>
       <div>
-        <p className="text-sm font-medium text-slate-300">{message}</p>
+        <p className="text-sm font-medium text-foreground">{message}</p>
         {hint ? (
-          <p className="mt-1 text-sm text-slate-500">{hint}</p>
+          <p className="mt-1 text-sm text-muted-foreground">{hint}</p>
         ) : null}
       </div>
       {action}
@@ -712,14 +778,79 @@ function EmptyState({
 
 function ErrorState({ message }: { message: string }) {
   return (
-    <div className="flex items-start gap-3 rounded-xl border border-red-500/30 bg-red-500/10 p-4">
+    <div className="flex items-start gap-3 rounded-xl border border-red-200 bg-red-50 p-4">
       <AlertCircle
-        className="mt-0.5 size-5 shrink-0 text-red-400"
+        className="mt-0.5 size-5 shrink-0 text-red-600"
         aria-hidden="true"
       />
       <div>
-        <p className="text-sm font-medium text-red-300">Search failed</p>
-        <p className="mt-1 text-sm text-red-400/90">{message}</p>
+        <p className="text-sm font-medium text-red-800">Search failed</p>
+        <p className="mt-1 text-sm text-red-700">{message}</p>
+      </div>
+    </div>
+  );
+}
+
+function SuggestionChips({
+  suggestions,
+  query = "",
+  selected = [],
+  onSelect,
+  formatLabel,
+  allowReselect = false,
+}: {
+  suggestions: string[];
+  query?: string;
+  selected?: string[];
+  onSelect: (value: string) => void;
+  formatLabel?: (value: string) => string;
+  allowReselect?: boolean;
+}) {
+  const normalizedQuery = query.trim().toLowerCase();
+
+  const visible = suggestions.filter((suggestion) => {
+    if (!allowReselect && selected.includes(suggestion)) {
+      return false;
+    }
+
+    if (
+      normalizedQuery &&
+      !suggestion.toLowerCase().includes(normalizedQuery)
+    ) {
+      return false;
+    }
+
+    return true;
+  });
+
+  if (visible.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="mt-2">
+      <p className="mb-1.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+        Suggestions
+      </p>
+      <div className="flex flex-wrap gap-1.5">
+        {visible.map((suggestion) => {
+          const isSelected = selected.includes(suggestion);
+
+          return (
+            <button
+              key={suggestion}
+              type="button"
+              onClick={() => onSelect(suggestion)}
+              className={cn(
+                suggestionChipClass,
+                isSelected &&
+                  "border-foreground bg-foreground text-background",
+              )}
+            >
+              {formatLabel?.(suggestion) ?? suggestion}
+            </button>
+          );
+        })}
       </div>
     </div>
   );
@@ -743,4 +874,14 @@ function formatPercent(value: number) {
     maximumFractionDigits: 1,
     signDisplay: "exceptZero",
   }).format(value);
+}
+
+function clampLimitInput(value: string): number {
+  const parsed = parseInt(value.trim(), 10);
+
+  if (!Number.isFinite(parsed)) {
+    return DEFAULT_COMPANY_LIMIT;
+  }
+
+  return Math.min(MAX_COMPANY_LIMIT, Math.max(1, parsed));
 }

@@ -10,17 +10,47 @@ Built as a take-home project for the GTM Engineer role. The interesting part isn
 
 ```bash
 pnpm install
-cd apps/admin
-cp .env.example .env.local   # then fill in the two keys below
-pnpm dev                     # http://localhost:3001
+# add the two keys below to apps/server/.env
+pnpm build   # one-time: builds the shared package the apps import
+pnpm dev     # admin UI on :3001, NestJS API on :4000
 ```
 
-| Variable | Required | Purpose |
+| Variable (in `apps/server/.env`) | Required | Purpose |
 |----------|----------|---------|
 | `APOLLO_API_KEY` | Yes | Company search, enrichment, people search |
 | `ANTHROPIC_API_KEY` | No, but strongly recommended | AI pre-screen + prospect ranking. Without it, the tool falls back to filter-signal ranking only. |
 
+The keys live only in the NestJS server; the Next.js admin proxies to it through `COMPANY_DISCOVERY_API_URL`, which is server-side only.
+
 Select ICP filter chips, set how many companies you want, and hit **Search Companies**. Each result card shows firmographics, which filter signals matched, and the AI's judgment with a one-line reason.
+
+## Railway deploy
+
+Deploy this monorepo as two Railway services:
+
+1. **Server** (`apps/server`) — NestJS company discovery API.
+2. **Admin** (`apps/admin`) — Next.js UI and same-origin proxy.
+
+Copy the service settings from:
+
+- `docs/deploy/railway.server.toml`
+- `docs/deploy/railway.admin.toml`
+
+Set these variables on the **server** service:
+
+| Variable | Required | Notes |
+|----------|----------|-------|
+| `APOLLO_API_KEY` | Yes | Rotate before deploy if the key was exposed during local exploration. |
+| `ANTHROPIC_API_KEY` | No | Enables AI pre-screening and prospect ranking. |
+| `DATABASE_URL` | Yes for current install | Needed by the server `postinstall` Prisma generate step, even though company discovery does not persist data yet. |
+
+Set this variable on the **admin** service:
+
+| Variable | Required | Notes |
+|----------|----------|-------|
+| `COMPANY_DISCOVERY_API_URL` | Yes | Runtime URL for the NestJS service, for example Railway's private service URL or the server's public URL. Do not use a `NEXT_PUBLIC_` prefix. |
+
+Prefer Railway private networking for `COMPANY_DISCOVERY_API_URL` and keep the NestJS service private if possible. If the NestJS service is public, add auth or a shared internal API key before exposing it.
 
 ## How it works
 
@@ -30,7 +60,7 @@ Select ICP filter chips, set how many companies you want, and hit **Search Compa
        │ search      │   + size / location / hiring / revenue filters
        └──────┬──────┘
               │ slim records (name, domain, revenue — no industry/size/location)
-       ┌──────▼──────┐   1 Haiku call, scores only (no reasons = fast)
+       ┌──────▼──────┐   parallel Haiku calls (chunks of 25), scores only
        │ AI          │   "Is this plausibly a Mural Pay prospect?"
        │ pre-screen  │   Sorts the pool so enrichment is spent wisely
        └──────┬──────┘
@@ -45,16 +75,16 @@ Select ICP filter chips, set how many companies you want, and hit **Search Compa
        ┌──────▼──────┐   1 people-search call over the top 20:
        │ Buyer       │   does a CPO/CLO/CFO actually exist there?
        │ verification│   (mixed_people/search is credit-free)
-       └──────┬──────┘
-       ┌──────▼──────┐   1 Haiku call over the top 20, with reasons.
-       │ AI prospect │   Knows what Mural Pay sells, who its customers
-       │ ranking     │   are, and what a great prospect looks like
+       └──────┬──────┘   ← runs CONCURRENTLY with ranking below
+       ┌──────▼──────┐   parallel Haiku calls over the top 20 (chunks of
+       │ AI prospect │   10), with reasons. Knows what Mural Pay sells and
+       │ ranking     │   what a great prospect looks like
        └──────┬──────┘
               ▼
         Top N results   (composite score, sorted)
 ```
 
-Five external calls total for a typical search: 1 search + 1 pre-screen + 1–2 enrichment + 1 people search + 1 ranking. Typical end-to-end latency ~10s.
+For a typical search: 1 search + 4 parallel pre-screen chunks + 1–2 parallel enrichment + (1 people search ∥ 2 parallel ranking chunks). LLM calls are output-token-bound, so chunking them and overlapping verification with ranking cut end-to-end latency from ~10s to ~5–6s.
 
 ### Scoring model
 
@@ -117,19 +147,19 @@ Each of these came from a live failure, not theory:
 | Step | Calls | Credits | ~Latency |
 |------|-------|---------|----------|
 | Apollo search | 1 | per-call (cheap) | 1–2s |
-| AI pre-screen (scores only) | 1 Haiku | — (~$0.001) | 3–4s |
+| AI pre-screen (scores only) | 4 Haiku, parallel | — (~$0.001) | 1–2s |
 | Bulk enrichment | 2, parallel | ~20 (1/company) | 1–2s |
-| People search | 1 | free | ~1s |
-| AI ranking (reasons) | 1 Haiku | — (~$0.001) | 3–4s |
+| People search | 1 | free | ~1s (overlapped with ranking) |
+| AI ranking (reasons) | 2 Haiku, parallel | — (~$0.001) | 1–2s |
 
 Tuning knobs all live in `apps/admin/src/features/company-discovery/constants.ts`: pool depth (`PRESCREEN_MULTIPLIER`), enrichment spend (`ENRICH_MULTIPLIER`/`ENRICH_MAX`), AI weight (`LLM_RERANK_WEIGHT`), fit thresholds, keyword clusters, and the seller context prompt.
 
 ## Testing
 
-47 unit tests cover the risky logic: Apollo request mapping, keyword expansion, enrichment merging and failure fallback, the geography gate, composite scoring (including regression tests named after real bugs — the revenue-only stub, the Greek sportsbook, the unjudged-company leapfrog), people-search verification, and prompt construction.
+50 unit tests cover the risky pipeline logic: Apollo request mapping, keyword expansion, enrichment merging and failure fallback, the geography gate, composite scoring (including regression tests named after real bugs — the revenue-only stub, the Greek sportsbook, the unjudged-company leapfrog), people-search verification, LLM chunking/partial-failure merging, and prompt construction. 5 NestJS tests cover the API's error mapping (missing key, bad body, Apollo 401).
 
 ```bash
-cd apps/admin && pnpm test
+pnpm test   # runs vitest (packages/company-discovery) + jest (apps/server) via turbo
 ```
 
 All external calls are injected (`fetcher` parameter), so tests run fully offline.
@@ -144,15 +174,21 @@ All external calls are injected (`fetcher` parameter), so tests run fully offlin
 ## Project structure
 
 ```
+packages/company-discovery/src/   # Shared domain package (framework-agnostic)
+├── constants.ts    # ICP defaults, keyword clusters, weights, seller context
+├── apollo.ts       # Pipeline: search → pre-screen → enrich → gate → verify → rank
+├── rerank.ts       # LLM judge (chunked parallel calls, verdict parsing)
+├── types.ts        # Shared types (consumed by both apps)
+└── *.test.ts       # 50 tests (vitest)
+
+apps/server/src/company-discovery/  # NestJS API: POST /company-search
+├── company-discovery.controller.ts # Route
+├── company-discovery.service.ts    # Keys via ConfigService, error mapping
+└── company-discovery.service.spec.ts
+
 apps/admin/src/
-├── app/api/company-search/route.ts        # API endpoint (keys stay server-side)
-├── components/company-discovery-client.tsx # UI: filter chips, results, AI judgments
-└── features/company-discovery/
-    ├── constants.ts    # ICP defaults, keyword clusters, weights, seller context
-    ├── apollo.ts       # Pipeline: search → pre-screen → enrich → gate → verify → rank
-    ├── rerank.ts       # LLM judge (prompt build, call, verdict parsing)
-    ├── types.ts        # Shared types
-    └── *.test.ts       # 47 tests (vitest)
+├── app/api/company-search/route.ts        # Thin proxy to the NestJS API
+└── components/company-discovery-client.tsx # UI: filter chips, results, AI judgments
 ```
 
-Monorepo: Turborepo + pnpm, Next.js 14 (App Router), Tailwind + shadcn/ui, TypeScript throughout. The `app` (public portal) and `server` (NestJS) workspaces are scaffolding for later phases.
+Monorepo: Turborepo + pnpm, TypeScript throughout. Next.js 14 admin UI → NestJS API → shared domain package, so the pipeline has one home and typed boundaries on both sides. Postgres/Prisma and Redis/BullMQ are scaffolded for phase 2 (persisted search runs, background pipeline jobs with progress streaming); the `app` workspace is the future public portal.

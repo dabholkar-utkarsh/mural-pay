@@ -1,40 +1,52 @@
 import { NextResponse } from "next/server";
 
-import {
-  parseCompanySearchRequest,
-  searchApolloCompanies,
-} from "@/features/company-discovery/apollo";
+// Thin proxy to the NestJS server, which owns the discovery pipeline and the
+// API keys. Keeps the browser on the same origin (no CORS, no exposed keys).
+const API_URL = process.env.COMPANY_DISCOVERY_API_URL ?? "http://localhost:4000";
+
+function getClientIp(request: Request): string {
+  const forwarded = request.headers.get("x-forwarded-for");
+
+  if (forwarded) {
+    return forwarded.split(",")[0]?.trim() || "unknown";
+  }
+
+  return request.headers.get("x-real-ip") ?? "unknown";
+}
 
 export async function POST(request: Request) {
-  const apiKey = process.env.APOLLO_API_KEY;
+  try {
+    const clientIp = getClientIp(request);
 
-  if (!apiKey) {
+    const response = await fetch(`${API_URL}/company-search`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Forwarded-For": clientIp,
+      },
+      body: JSON.stringify(await request.json()),
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      return NextResponse.json(
+        // NestJS exceptions put the human-readable text in `message`.
+        { error: data.message ?? data.error ?? "Company search failed" },
+        { status: response.status },
+      );
+    }
+
+    return NextResponse.json(data);
+  } catch {
     return NextResponse.json(
       {
         error:
-          "Missing APOLLO_API_KEY. Add it to your local environment and restart the admin app.",
+          process.env.NODE_ENV === "production"
+            ? "Company discovery API is temporarily unavailable."
+            : `Company discovery API is unreachable at ${API_URL}. Start it with \`pnpm dev\` (or cd apps/server && pnpm dev).`,
       },
-      { status: 500 },
+      { status: 502 },
     );
-  }
-
-  try {
-    const body = await request.json();
-    const searchRequest = parseCompanySearchRequest(body);
-    const result = await searchApolloCompanies({
-      apiKey,
-      request: searchRequest,
-      anthropicApiKey: process.env.ANTHROPIC_API_KEY,
-    });
-
-    return NextResponse.json(result);
-  } catch (error) {
-    const message =
-      error instanceof Error ? error.message : "Company search failed";
-    const status = message.includes("Apollo search failed with status 401")
-      ? 401
-      : 400;
-
-    return NextResponse.json({ error: message }, { status });
   }
 }
