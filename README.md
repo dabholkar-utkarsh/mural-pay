@@ -4,8 +4,6 @@ An internal GTM tool that finds and ranks companies matching Mural Pay's ideal c
 
 Built as a take-home project for the GTM Engineer role. The interesting part isn't the UI — it's the matching pipeline and the data problems it had to solve (documented in [Design decisions](#design-decisions--what-the-data-taught-us)).
 
-![Tool](docs/screenshot.png)
-
 ## Quick start
 
 ```bash
