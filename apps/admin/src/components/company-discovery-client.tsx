@@ -4,6 +4,7 @@ import {
   AlertCircle,
   Building2,
   ChevronDown,
+  Download,
   ExternalLink,
   Filter,
   Loader2,
@@ -16,6 +17,7 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
+  buildCompanyExportRows,
   DEFAULT_COMPANY_LIMIT,
   DEFAULT_FILTERS,
   EMPTY_FILTERS,
@@ -478,12 +480,24 @@ function CompanyResults({
 
   return (
     <div className="flex flex-col gap-2">
-      <h3 className="mb-1 text-sm font-medium text-muted-foreground">
-        {companies.length} result{companies.length === 1 ? "" : "s"}
-        {companies.length < requestedLimit
-          ? ` of ${requestedLimit} requested`
-          : ""}
-      </h3>
+      <div className="mb-1 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <h3 className="text-sm font-medium text-muted-foreground">
+          {companies.length} result{companies.length === 1 ? "" : "s"}
+          {companies.length < requestedLimit
+            ? ` of ${requestedLimit} requested`
+            : ""}
+        </h3>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="w-fit cursor-pointer"
+          onClick={() => exportCompaniesToExcel(companies)}
+        >
+          <Download className="size-4" aria-hidden="true" />
+          Export Excel
+        </Button>
+      </div>
       {companies.map((company, index) => (
         <CompanyCard
           key={company.id}
@@ -874,6 +888,56 @@ function formatPercent(value: number) {
     maximumFractionDigits: 1,
     signDisplay: "exceptZero",
   }).format(value);
+}
+
+function exportCompaniesToExcel(companies: DiscoveredCompany[]) {
+  const rows = buildCompanyExportRows(companies);
+
+  if (rows.length === 0) {
+    return;
+  }
+
+  const headers = Object.keys(rows[0]);
+  const worksheet = [
+    headers,
+    ...rows.map((row) =>
+      headers.map((header) => row[header as keyof typeof row]),
+    ),
+  ];
+  const html = `<!doctype html><html><head><meta charset="utf-8" /></head><body><table>${worksheet
+    .map(
+      (row) =>
+        `<tr>${row
+          .map((cell) => `<td>${escapeSpreadsheetCell(cell)}</td>`)
+          .join("")}</tr>`,
+    )
+    .join("")}</table></body></html>`;
+  const blob = new Blob([html], {
+    type: "application/vnd.ms-excel;charset=utf-8",
+  });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+
+  link.href = url;
+  link.download = `mural-company-discovery-top-${rows.length}-${formatDateForFilename(
+    new Date(),
+  )}.xls`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+function escapeSpreadsheetCell(value: string | number) {
+  return String(value)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
+}
+
+function formatDateForFilename(date: Date) {
+  return date.toISOString().slice(0, 10);
 }
 
 function clampLimitInput(value: string): number {
