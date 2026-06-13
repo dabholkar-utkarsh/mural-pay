@@ -19,6 +19,7 @@ pnpm dev     # admin UI on :3001, NestJS API on :4000
 |----------|----------|---------|
 | `APOLLO_API_KEY` | Yes | Company search, enrichment, people search |
 | `ANTHROPIC_API_KEY` | No, but strongly recommended | AI pre-screen + prospect ranking. Without it, the tool falls back to filter-signal ranking only. |
+| `REDIS_URL` | No | Caches search results for 24h to skip repeat Apollo/Anthropic calls. Leave unset to disable caching; search still works. |
 
 The keys live only in the NestJS server; the Next.js admin proxies to it through `COMPANY_DISCOVERY_API_URL`, which is server-side only.
 
@@ -26,31 +27,40 @@ Select ICP filter chips, set how many companies you want, and hit **Search Compa
 
 ## Railway deploy
 
-Deploy this monorepo as two Railway services:
+Deploy this monorepo as separate Railway services, each from the same repo with its own config-as-code path:
 
-1. **Server** (`apps/server`) — NestJS company discovery API.
-2. **Admin** (`apps/admin`) — Next.js UI and same-origin proxy.
-
-Copy the service settings from:
-
-- `docs/deploy/railway.server.toml`
-- `docs/deploy/railway.admin.toml`
+| Service | Code | Config path | Public domain? |
+|---------|------|-------------|----------------|
+| **server** | `apps/server` | `docs/deploy/railway.server.toml` | No — keep private |
+| **admin** | `apps/admin` | `docs/deploy/railway.admin.toml` | Yes (the team UI) |
+| **app** | `apps/app` | `docs/deploy/railway.app.toml` | Yes (public portal) |
 
 Set these variables on the **server** service:
 
 | Variable | Required | Notes |
 |----------|----------|-------|
 | `APOLLO_API_KEY` | Yes | Rotate before deploy if the key was exposed during local exploration. |
-| `ANTHROPIC_API_KEY` | No | Enables AI pre-screening and prospect ranking. |
-| `DATABASE_URL` | Yes for current install | Needed by the server `postinstall` Prisma generate step, even though company discovery does not persist data yet. |
+| `ANTHROPIC_API_KEY` | No | Enables AI pre-screening and prospect ranking. A missing/malformed value silently drops the AI judgment while Apollo results still return. |
+| `REDIS_URL` | No | Set to a Redis service (e.g. `${{Redis.REDIS_URL}}`) to cache search results for 24h. Leave unset to disable caching. |
+| `PORT` | No | Railway injects this at runtime. Set it explicitly only if admin references `${{server.PORT}}` (cross-service refs don't resolve the injected port automatically). |
 
 Set this variable on the **admin** service:
 
 | Variable | Required | Notes |
 |----------|----------|-------|
-| `COMPANY_DISCOVERY_API_URL` | Yes | Runtime URL for the NestJS service, for example Railway's private service URL or the server's public URL. Do not use a `NEXT_PUBLIC_` prefix. |
+| `COMPANY_DISCOVERY_API_URL` | Yes | Runtime URL for the NestJS service. Private: `http://${{server.RAILWAY_PRIVATE_DOMAIN}}:${{server.PORT}}`. Public: the server's `https://…up.railway.app`. Do not use a `NEXT_PUBLIC_` prefix. |
 
-Prefer Railway private networking for `COMPANY_DISCOVERY_API_URL` and keep the NestJS service private if possible. If the NestJS service is public, add auth or a shared internal API key before exposing it.
+The **app** (public portal) needs none of these variables — it only holds whatever the portal itself uses.
+
+Notes:
+
+- **Private networking is IPv6-only.** The server binds to `::` (see `apps/server/src/main.ts`) so it's reachable over Railway's private network. Without that bind, admin gets connection-refused.
+- Prefer private networking for `COMPANY_DISCOVERY_API_URL` and keep the NestJS service private. If the server is public, add auth or a shared internal API key before exposing it.
+- Keep the server at **1 replica** — the search rate limiter is in-memory (`railway.server.toml` pins this).
+
+### Optional: search result caching
+
+Add a Redis service to the project and set the server's `REDIS_URL` to its private URL. Identical searches are then served from cache for 24h, skipping Apollo/Anthropic entirely. The cache is **fail-open**: if Redis is unset or unreachable, search runs uncached rather than erroring.
 
 ## How it works
 
@@ -152,6 +162,8 @@ Each of these came from a live failure, not theory:
 | People search | 1 | free | ~1s (overlapped with ranking) |
 | AI ranking (reasons) | 2 Haiku, parallel | — (~$0.001) | 1–2s |
 
+With `REDIS_URL` configured, an identical repeat search within 24h skips every step above — it returns straight from cache for ~0 credits and negligible latency.
+
 Tuning knobs all live in `apps/admin/src/features/company-discovery/constants.ts`: pool depth (`PRESCREEN_MULTIPLIER`), enrichment spend (`ENRICH_MULTIPLIER`/`ENRICH_MAX`), AI weight (`LLM_RERANK_WEIGHT`), fit thresholds, keyword clusters, and the seller context prompt.
 
 ## Testing
@@ -183,7 +195,8 @@ packages/company-discovery/src/   # Shared domain package (framework-agnostic)
 
 apps/server/src/company-discovery/  # NestJS API: POST /company-search
 ├── company-discovery.controller.ts # Route
-├── company-discovery.service.ts    # Keys via ConfigService, error mapping
+├── company-discovery.service.ts    # Keys via ConfigService, cache, error mapping
+├── search-cache.ts                 # Fail-open Redis cache (24h TTL), optional
 └── company-discovery.service.spec.ts
 
 apps/admin/src/
@@ -191,4 +204,4 @@ apps/admin/src/
 └── components/company-discovery-client.tsx # UI: filter chips, results, AI judgments
 ```
 
-Monorepo: Turborepo + pnpm, TypeScript throughout. Next.js 14 admin UI → NestJS API → shared domain package, so the pipeline has one home and typed boundaries on both sides. Postgres/Prisma and Redis/BullMQ are scaffolded for phase 2 (persisted search runs, background pipeline jobs with progress streaming); the `app` workspace is the future public portal.
+Monorepo: Turborepo + pnpm, TypeScript throughout. Next.js 14 admin UI → NestJS API → shared domain package, so the pipeline has one home and typed boundaries on both sides. Redis is used for optional search-result caching; the `app` workspace is the future public portal. (Earlier Postgres/Prisma and BullMQ scaffolding was removed — there's no persistence or job queue yet; see next steps.)
