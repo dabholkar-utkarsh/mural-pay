@@ -33,7 +33,7 @@ import type {
 const APOLLO_SEARCH_URL = "https://api.apollo.io/api/v1/mixed_companies/search";
 const APOLLO_PEOPLE_SEARCH_URL =
   "https://api.apollo.io/api/v1/mixed_people/search";
-const APOLLO_BULK_ENRICH_URL =
+export const APOLLO_BULK_ENRICH_URL =
   "https://api.apollo.io/api/v1/organizations/bulk_enrich";
 
 type BuildApolloSearchBodyInput = CompanySearchRequest & {
@@ -458,7 +458,7 @@ export function matchesActiveLocations(
   );
 }
 
-function apolloHeaders(apiKey: string) {
+export function apolloHeaders(apiKey: string) {
   return {
     "Cache-Control": "no-cache",
     "Content-Type": "application/json",
@@ -717,7 +717,7 @@ function buildMatchedFilters(
   return Array.from(new Set(matches));
 }
 
-function formatLocation(organization: ApolloOrganization): string | null {
+export function formatLocation(organization: ApolloOrganization): string | null {
   const city = organization.city ?? organization.organization_city;
   const state = organization.state ?? organization.organization_state;
   const country = organization.country ?? organization.organization_country;

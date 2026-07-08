@@ -11,4 +11,12 @@ export class CompanyDiscoveryController {
   search(@Body() body: unknown) {
     return this.companyDiscovery.search(body);
   }
+
+  // Reverse ICP: derive filters/signals from example company domains.
+  // Shares the search rate limit — it spends the same Apollo/Anthropic credits.
+  @Post('derive-icp')
+  @UseGuards(SearchRateLimitGuard)
+  deriveIcp(@Body() body: unknown) {
+    return this.companyDiscovery.deriveIcp(body);
+  }
 }

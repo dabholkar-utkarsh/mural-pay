@@ -10,8 +10,10 @@ import {
   Loader2,
   Search,
   Sparkles,
+  Wand2,
   X,
 } from "lucide-react";
+import Link from "next/link";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -32,6 +34,7 @@ import type {
   FilterGroupKey,
 } from "@mural/company-discovery";
 import { cn } from "@/lib/utils";
+import { DERIVED_FILTERS_STORAGE_KEY } from "@/components/derive-icp-client";
 
 type SearchState = "idle" | "loading" | "success" | "error";
 type ToggleGroupKey = FilterGroupKey;
@@ -54,6 +57,39 @@ export function CompanyDiscoveryClient() {
   const [searchState, setSearchState] = useState<SearchState>("idle");
   const [error, setError] = useState<string | null>(null);
   const [results, setResults] = useState<CompanySearchResponse | null>(null);
+
+  // Filters handed over from the /icp "Apply to search" flow (one-shot).
+  useEffect(() => {
+    const raw = sessionStorage.getItem(DERIVED_FILTERS_STORAGE_KEY);
+
+    if (!raw) {
+      return;
+    }
+
+    sessionStorage.removeItem(DERIVED_FILTERS_STORAGE_KEY);
+
+    try {
+      const parsed = JSON.parse(raw) as Partial<CompanyFilters>;
+
+      setFilters({
+        keywords: Array.isArray(parsed.keywords) ? parsed.keywords : [],
+        employeeRanges: Array.isArray(parsed.employeeRanges)
+          ? parsed.employeeRanges
+          : [],
+        revenueMin:
+          typeof parsed.revenueMin === "number" && parsed.revenueMin > 0
+            ? parsed.revenueMin
+            : 0,
+        locations: Array.isArray(parsed.locations) ? parsed.locations : [],
+        jobTitles: Array.isArray(parsed.jobTitles) ? parsed.jobTitles : [],
+        hiringTitles: Array.isArray(parsed.hiringTitles)
+          ? parsed.hiringTitles
+          : [],
+      });
+    } catch {
+      // Corrupt handoff: keep the defaults.
+    }
+  }, []);
 
   const activeFilterCount = useMemo(
     () =>
@@ -167,6 +203,13 @@ export function CompanyDiscoveryClient() {
                 Find companies that match your ICP, review fit signals, and
                 decide which accounts deserve deeper research.
               </p>
+              <Link
+                className="mt-4 inline-flex items-center gap-1.5 text-sm font-medium text-muted-foreground transition-colors duration-200 hover:text-foreground"
+                href="/icp"
+              >
+                <Wand2 className="size-4" aria-hidden="true" />
+                Start from example companies instead
+              </Link>
             </div>
             <div className="flex shrink-0 items-center gap-3 rounded-2xl border border-border bg-muted px-5 py-4">
               <Filter className="size-5 text-muted-foreground" aria-hidden="true" />
